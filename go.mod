@@ -11,7 +11,6 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/mattn/go-colorable v0.1.14
 	github.com/redis/go-redis/v9 v9.7.1
-	github.com/robfig/cron v1.2.0
 	github.com/rs/zerolog v1.33.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/segmentio/kafka-go v0.4.47
