@@ -38,7 +38,7 @@ class GrokClient:
         
         self.client = httpx.Client(
             http2=True,
-            timeout=20,
+            timeout=60,
             cookies=self.cookies,
             proxy=proxy if proxy else None,
             verify=True
