@@ -200,10 +200,7 @@ async def get_conversation_history(auth_token: str, ct0: str, conversation_id: s
     ```json
     {
         "success": true,
-        "data": {
-            "messages": [...],
-            "participants": [...]
-        }
+        "data": {...}
     }
     """
     try:
@@ -216,6 +213,59 @@ async def get_conversation_history(auth_token: str, ct0: str, conversation_id: s
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(
+    "/generate_transaction_id",
+    response_model=GrokResponse,
+    summary="Generate X-Client-Transaction ID",
+    response_description="Returns generated transaction ID",
+    tags=["Utilities"]
+)
+async def generate_transaction_id(
+    auth_token: str,
+    ct0: str,
+    method: str,
+    path: str,
+    proxy: Optional[str] = None
+):
+    """Generate an X-Client-Transaction ID for API requests (GET version)
+    
+    ## Parameters
+    - `auth_token`: X/Twitter authentication token (required in query)
+    - `ct0`: CSRF token (required in query)
+    - `method`: HTTP method (e.g., "GET", "POST") (required)
+    - `path`: URL path component (e.g., "/api/grok") (required)
+    - `proxy`: Optional proxy URL
+    
+    ## Example Request
+    ```
+    GET /generate_transaction_id?auth_token=XXX&ct0=YYY&method=POST&path=/api/grok
+    ```
+    
+    ## Example Response
+    ```json
+    {
+        "success": true,
+        "data": {
+            "transaction_id": "transaction_id"
+        }
+    }
+    ```
+    """
+    try:
+        with get_client(auth_token, ct0, proxy) as client:
+            transaction_id = client.ct.generate_transaction_id(
+                method=method,
+                path=path
+            )
+            return GrokResponse(
+                success=True,
+                data={"transaction_id": transaction_id},
+                error=None
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 @app.get("/health")
 async def health_check():
