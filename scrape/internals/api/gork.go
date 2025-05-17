@@ -3,250 +3,196 @@ package twitterAPI
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"time"
+	"io"
+	"net/http"
 
 	"github.com/tidwall/gjson"
-	http "github.com/bogdanfinn/fhttp"
-)
-
-const (
-	grokCreateConvEndpoint = "/i/api/graphql/vvC5uy7pWWHXS2aDi1FZeA/CreateGrokConversation"
-	grokAddResponseURL     = "https://grok.x.com/2/grok/add_response.json"
-	grokGetConvEndpoint   = "/i/api/graphql/y1Lkc52sobXGzJ8ADjNEIw/GrokConversationItemsByRestId"
-	maxRetries            = 3
-	baseRetryDelay        = 2 * time.Second
-)
-
-var (
-	HardcodedCookies = []*http.Cookie{
-		{Name: "auth_token", Value: "da110b5c6b681e1540689ea828594dc575c31836"},
-		{Name: "ct0", Value: "5d338a6ca6edb9711f59f80e469edd6bef26ad9ab2972495d0b01da2cafb2c35f536725e804b4dc084d9dc8d810079613970bfe5e531a549a243661a3f0d0948a6e86d85035fb2ad0358a1d7f8f008ee"},
-	}
 )
 
 type GrokClient struct {
-	twitterClient *TwitterClient
+	BaseURL    string
+	AuthToken  string
+	Ct0        string
+	HTTPClient *http.Client
 }
 
-func NewGrokClient(twitterClient *TwitterClient) *GrokClient {
+func NewGrokClient(authToken, ct0 string) *GrokClient {
 	return &GrokClient{
-		twitterClient: twitterClient,
+		BaseURL:    "http://localhost:8000",
+		AuthToken:  authToken,
+		Ct0:        ct0,
+		HTTPClient: &http.Client{},
 	}
 }
 
-type GrokResponse struct {
-	ConversationID string
-	Messages       []GrokMessage
+func (c *GrokClient) SetBaseURL(url string) {
+	c.BaseURL = url
 }
 
-type GrokMessage struct {
-	SenderType string
-	Message    string
-	Timestamp  time.Time
+type Response struct {
+	Success bool            `json:"success"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	Error   string          `json:"error,omitempty"`
 }
 
-type GrokRequest struct {
-	ConversationID       string                 `json:"conversationId"`
-	EnableSideBySide     bool                   `json:"enableSideBySide"`
-	GrokModelOptionID    string                 `json:"grokModelOptionId"`
-	ImageGenerationCount int                    `json:"imageGenerationCount"`
-	PromptMetadata       map[string]interface{} `json:"promptMetadata"`
-	RequestFeatures      map[string]bool        `json:"requestFeatures"`
-	Responses            []GrokRequestMessage   `json:"responses"`
-	ReturnCitations      bool                   `json:"returnCitations"`
-	ReturnSearchResults  bool                   `json:"returnSearchResults"`
-	SystemPromptName     string                 `json:"systemPromptName"`
-	ToolOverrides        map[string]interface{} `json:"toolOverrides"`
-	IsDeepsearch         bool                   `json:"isDeepsearch"`
-	IsReasoning          bool                   `json:"isReasoning"`
-}
-
-type GrokRequestMessage struct {
-	Message         string        `json:"message"`
-	Sender          int           `json:"sender"`
-	PromptSource    string        `json:"promptSource,omitempty"`
-	FileAttachments []interface{} `json:"fileAttachments"`
-}
-
-// CreateConversation creates a new Grok conversation with retry logic
-func (gc *GrokClient) CreateConversation() (string, error) {
-	payload := map[string]interface{}{
-		"variables": map[string]interface{}{},
-		"queryId":   "vvC5uy7pWWHXS2aDi1FZeA",
+// CreateConversation creates a new conversation (Not required to start conv)
+func (c *GrokClient) CreateConversation(proxy string) (string, error) {
+	reqBody := struct {
+		AuthToken string `json:"auth_token"`
+		Ct0       string `json:"ct0"`
+		Proxy     string `json:"proxy,omitempty"`
+	}{
+		AuthToken: c.AuthToken,
+		Ct0:       c.Ct0,
+		Proxy:     proxy,
 	}
 
-	var conversationID string
-	var lastErr error
+	body, err := c.doRequest("POST", "/create_conversation", reqBody)
+	if err != nil {
+		return "", err
+	}
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(1 * time.Second)
-		}
+	// Use gjson to parse the response
+	result := gjson.ParseBytes(body)
+	if !result.Get("success").Bool() {
+		return "", errors.New(result.Get("error").String())
+	}
 
-		bodyBytes, err := json.Marshal(payload)
+	// Try to get conversation_id from both possible locations
+	convID := result.Get("data.conversation_id").String()
+	if convID == "" {
+		convID = result.Get("data.data.create_grok_conversation.conversation_id").String()
+	}
+
+	if convID == "" {
+		return "", errors.New("conversation_id not found in response")
+	}
+
+	return convID, nil
+}
+
+
+// SendMessage sends a message to Grok (you can use this request only and get the response in one go)
+func (c *GrokClient) SendMessage(message, conversationID, model, proxy string, rawResponse bool) (string, string, error) {
+	reqBody := struct {
+		AuthToken      string `json:"auth_token"`
+		Ct0            string `json:"ct0"`
+		Message        string `json:"message"`
+		ConversationID string `json:"conversation_id,omitempty"`
+		Model          string `json:"model,omitempty"`
+		Proxy          string `json:"proxy,omitempty"`
+		RawResponse    bool   `json:"raw_response,omitempty"`
+	}{
+		AuthToken:      c.AuthToken,
+		Ct0:            c.Ct0,
+		Message:        message,
+		ConversationID: conversationID,
+		Model:          model,
+		Proxy:          proxy,
+		RawResponse:    rawResponse,
+	}
+
+	body, err := c.doRequest("POST", "/send_message", reqBody)
+	if err != nil {
+		return "", "", err
+	}
+
+	result := gjson.ParseBytes(body)
+	if !result.Get("success").Bool() {
+		return "", "", errors.New(result.Get("error").String())
+	}
+
+	cleanResponse := result.Get("data.clean_response").String()
+	rawResp := result.Get("data.raw_response").String()
+
+	return cleanResponse, rawResp, nil
+}
+
+
+// GetConversationHistory retrieves the message history for a conversation (this is not requirede or needed just added it, maybe for further use)
+func (c *GrokClient) GetConversationHistory(conversationID, proxy string) (string, error) {
+	url := fmt.Sprintf("%s/conversation_history?auth_token=%s&ct0=%s&conversation_id=%s", 
+		c.BaseURL, c.AuthToken, c.Ct0, conversationID)
+	if proxy != "" {
+		url += "&proxy=" + proxy
+	}
+
+	resp, err := c.HTTPClient.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	result := gjson.ParseBytes(body)
+	if !result.Get("success").Bool() {
+		return "", errors.New(result.Get("error").String())
+	}
+
+	return result.Get("data").Raw, nil
+}
+
+
+// GenerateTransactionID generates an X-Client-Transaction ID (this is very important you can use it as util and et the x_transaction_id for any endpoint)
+func (c *GrokClient) GenerateTransactionID(method, path, proxy string) (string, error) {
+	url := fmt.Sprintf("%s/generate_transaction_id?auth_token=%s&ct0=%s&method=%s&path=%s", 
+		c.BaseURL, c.AuthToken, c.Ct0, method, path)
+	if proxy != "" {
+		url += "&proxy=" + proxy
+	}
+
+	resp, err := c.HTTPClient.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	result := gjson.ParseBytes(body)
+	if !result.Get("success").Bool() {
+		return "", errors.New(result.Get("error").String())
+	}
+
+	return result.Get("data.transaction_id").String(), nil
+}
+
+// doRequest is a helper method to perform HTTP requests
+func (c *GrokClient) doRequest(method, path string, requestBody interface{}) ([]byte, error) {
+	var body io.Reader
+	if requestBody != nil {
+		jsonData, err := json.Marshal(requestBody)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to marshal payload: %w", err)
-			continue
+			return nil, err
 		}
-
-		respBody, statusCode, err := gc.twitterClient.Post(
-			gc.twitterClient.BaseURL+grokCreateConvEndpoint,
-			bytes.NewReader(bodyBytes),
-			nil,
-		)
-		if err != nil {
-			lastErr = fmt.Errorf("request failed: %w", err)
-			continue
-		}
-
-		if statusCode != http.StatusOK {
-			lastErr = fmt.Errorf("unexpected status code: %d", statusCode)
-			continue
-		}
-
-		result := gjson.ParseBytes(*respBody)
-		conversationID = result.Get("data.create_grok_conversation.conversation_id").String()
-		if conversationID == "" {
-			lastErr = fmt.Errorf("empty conversation ID in response")
-			continue
-		}
-
-		return conversationID, nil
+		body = bytes.NewBuffer(jsonData)
 	}
 
-	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
-}
-
-// SendPrompt sends a message to Grok and returns the response
-func (gc *GrokClient) SendPrompt(conversationID, message string) (*GrokResponse, error) {
-	// Prepare the prompt request
-	req := GrokRequest{
-		ConversationID:       conversationID,
-		EnableSideBySide:     false,
-		GrokModelOptionID:    "grok-3",
-		ImageGenerationCount: 4,
-		PromptMetadata: map[string]interface{}{
-			"action":       "INPUT",
-			"promptSource": "NATURAL",
-		},
-		RequestFeatures: map[string]bool{
-			"eagerTweets":   true,
-			"serverHistory": true,
-		},
-		ReturnCitations:     true,
-		ReturnSearchResults: true,
-		IsDeepsearch:        false,
-		IsReasoning:         false,
-		Responses: []GrokRequestMessage{
-			{
-				Message:         message,
-				Sender:          1,
-				PromptSource:    "",
-				FileAttachments: nil,
-			},
-		},
+	req, err := http.NewRequest(method, c.BaseURL+path, body)
+	if err != nil {
+		return nil, err
 	}
 
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(1 * time.Second)
-		}
+	req.Header.Set("Content-Type", "application/json")
 
-		bodyBytes, err := json.Marshal(req)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to marshal payload: %w", err)
-			continue
-		}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
 
-		headers := http.Header{
-			"Host":      {"grok.x.com"},
-			"x-client-transaction-id": {"jglUm5I3HtYv3B9FPhqeLMP4zpFHqSQJN6W0gpxlyAHTTMDrXC4ZRAGkP4dA8WAb3IByWI3Ig255RlyQLULCsnTvHSbnjQ"},
-		}
-
-		respBody, statusCode, err := gc.twitterClient.Post(
-			grokAddResponseURL,
-			bytes.NewReader(bodyBytes),
-			&headers,
-		)
-		fmt.Println()
-		fmt.Println(string(*respBody))
-		fmt.Println()
-		if err != nil {
-			lastErr = fmt.Errorf("request failed: %w", err)
-			continue
-		}
-
-		if statusCode != http.StatusOK {
-			lastErr = fmt.Errorf("unexpected status code: %d", statusCode)
-			continue
-		}
-
-		// Wait for Grok to process the request
-		time.Sleep(3 * time.Second)
-
-		// Get the conversation to see the response
-		return nil, nil
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
 	}
 
-	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
-}
-
-// GetConversation retrieves the current state of a Grok conversation
-func (gc *GrokClient) GetConversation(conversationID string) (*GrokResponse, error) {
-	variables := map[string]string{
-		"restId": conversationID,
-	}
-
-	payload := map[string]interface{}{
-		"variables": variables,
-	}
-
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(1 * time.Second)
-		}
-
-		bodyBytes, err := json.Marshal(payload)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to marshal payload: %w", err)
-			continue
-		}
-
-		respBody, statusCode, err := gc.twitterClient.Post(
-			gc.twitterClient.BaseURL+grokGetConvEndpoint,
-			bytes.NewReader(bodyBytes),
-			nil,
-		)
-		if err != nil {
-			lastErr = fmt.Errorf("request failed: %w", err)
-			continue
-		}
-
-		if statusCode != http.StatusOK {
-			lastErr = fmt.Errorf("unexpected status code: %d", statusCode)
-			continue
-		}
-
-		result := gjson.ParseBytes(*respBody)
-		items := result.Get("data.grok_conversation_items_by_rest_id.items").Array()
-
-		var messages []GrokMessage
-		for _, item := range items {
-			messages = append(messages, GrokMessage{
-				SenderType: item.Get("sender_type").String(),
-				Message:    item.Get("message").String(),
-				Timestamp:  time.UnixMilli(item.Get("created_at").Int()),
-			})
-		}
-
-		return &GrokResponse{
-			ConversationID: conversationID,
-			Messages:       messages,
-		}, nil
-	}
-
-	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+	return io.ReadAll(resp.Body)
 }
