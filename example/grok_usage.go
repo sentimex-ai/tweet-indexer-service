@@ -11,7 +11,7 @@ import (
 
 func main() {
 	// Initialize client with your auth tokens
-	client := twitterAPI.NewGrokClient("da110b5c6b681e1540689ea828594dc575c31836", "ef8ca43c2a7cf099a0b16d8803bf6c121a25c09dd1f84edd56e4da30a0131e8af4bcae566dbf80b716456aeb7c0bc2c1ca96f9f29213cb3dd8ca89ac3b22d2b219b547c9210e2a67fed92da40bb27ab4")
+	client := twitterAPI.NewGrokClient("auth_token", "ct0")
 	
 	// Optionally change the base URL if not running locally
 	// client.SetBaseURL("http://your-api-url:8000")
