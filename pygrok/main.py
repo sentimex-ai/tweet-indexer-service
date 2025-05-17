@@ -155,24 +155,32 @@ async def send_message(data: SendMessageRequest):
     }
     """
     try:
-        with get_client(data.auth_token, data.ct0, data.proxy) as client:
-            conversation_id  = data.conversation_id
-            if not data.conversation_id:
-                conversation_id = client.create_conversation().get("data", {}).get("create_grok_conversation", {}).get("conversation_id")
-            raw_response = client.send_message(
-                message=data.message,
-                conversation_id=conversation_id,
-                model=data.model
-            )
-            clean_response = client.parse_grok_response(raw_response)
-            return GrokResponse(
-                success=True,
-                data={
-                    "raw_response": raw_response if data.raw_response else None,
-                    "clean_response": clean_response
-                },
-                error=None
-            )
+        def exc(trials: int = 10):
+            if trials <= 0:
+                return None, None
+            with get_client(data.auth_token, data.ct0, data.proxy) as client:
+                conversation_id  = data.conversation_id
+                if not data.conversation_id:
+                    conversation_id = client.create_conversation().get("data", {}).get("create_grok_conversation", {}).get("conversation_id")
+                raw_response = client.send_message(
+                    message=data.message,
+                    conversation_id=conversation_id,
+                    model=data.model
+                )
+                clean_response = client.parse_grok_response(raw_response)
+                if raw_response:
+                    return raw_response, clean_response
+                else:
+                    return exc(trials-1)
+        raw_response, clean_response = exc()
+        return GrokResponse(
+            success=True,
+            data={
+                "raw_response": raw_response if data.raw_response else None,
+                "clean_response": clean_response
+            },
+            error=None
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

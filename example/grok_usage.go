@@ -3,13 +3,15 @@ package main
 import (
 	"fmt"
 	"log"
+
+	"github.com/tidwall/gjson"
 	
 	twitterAPI "github.com/jeetdotso/tweet-indexer-service/scrape/internals/api"
 )
 
 func main() {
 	// Initialize client with your auth tokens
-	client := twitterAPI.NewGrokClient("auth_token", "ct0")
+	client := twitterAPI.NewGrokClient("da110b5c6b681e1540689ea828594dc575c31836", "ef8ca43c2a7cf099a0b16d8803bf6c121a25c09dd1f84edd56e4da30a0131e8af4bcae566dbf80b716456aeb7c0bc2c1ca96f9f29213cb3dd8ca89ac3b22d2b219b547c9210e2a67fed92da40bb27ab4")
 	
 	// Optionally change the base URL if not running locally
 	// client.SetBaseURL("http://your-api-url:8000")
@@ -22,12 +24,14 @@ func main() {
 	fmt.Printf("Created conversation: %s\n", convID)
 	
 	// Send a message
-	response, _, err := client.SendMessage("Hello Grok!", convID, "grok-3", "", false)
+	response, _, err := client.SendMessage("Is this tweet explicitly promoting a specific cryptocurrency token(s)? If yes, I want to know what token(s) the author is promoting in the tweet. Do not look at data from the comments section to answer my question. \"buy $NXCP\". output in raw txt strictly follow the following schema {\"isPromoting\": bool,\"tntokensPromoted\": list or null}", convID, "grok-3", "", false)
 	if err != nil {
 		log.Fatalf("Failed to send message: %v", err)
 	}
 	fmt.Printf("Grok response: %s\n", response)
-	
+	fmt.Println("isPromoting", gjson.Parse(response).Get("isPromoting"))
+	fmt.Println("tokensPromoted", gjson.Parse(response).Get("tokensPromoted"))
+
 	// Get conversation history
 	history, err := client.GetConversationHistory(convID, "")
 	if err != nil {
