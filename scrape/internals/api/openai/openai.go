@@ -1,4 +1,4 @@
-package twitterAPI
+package openai
 
 import (
 	"context"

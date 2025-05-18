@@ -24,7 +24,7 @@ func main() {
 	fmt.Printf("Created conversation: %s\n", convID)
 	
 	// Send a message
-	response, _, err := client.SendMessage("Is this tweet explicitly promoting a specific cryptocurrency token(s)? If yes, I want to know what token(s) the author is promoting in the tweet. Do not look at data from the comments section to answer my question. \"buy $NXCP\". output in raw txt strictly follow the following schema {\"isPromoting\": bool,\"tntokensPromoted\": list or null}", convID, "grok-3", "", false)
+	response, _, err := client.SendMessage("Is this tweet explicitly promoting a specific cryptocurrency token(s)? If yes, I want to know what token(s) the author is promoting in the tweet. Do not look at data from the comments section to answer my question. \"buy $NXCP\". output in raw txt strictly follow the following schema {\"isPromoting\": bool,\"tokensPromoted\": list or null}", convID, "grok-3", "", false)
 	if err != nil {
 		log.Fatalf("Failed to send message: %v", err)
 	}
