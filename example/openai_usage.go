@@ -25,4 +25,14 @@ func main() {
 	}
 	fmt.Println("response:")
 	fmt.Println(r)
+
+	imageURL := "https://images.pexels.com/photos/20804701/pexels-photo-20804701/free-photo-of-close-up-of-a-mallard-walking-on-a-field.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2"
+	prompt := "What's in this image? Describe in detail."
+	
+	analysis, err := client.AnalyzeImageURL(imageURL, prompt)
+	if err != nil {
+		log.Fatalf("Image analysis error: %v", err)
+	}
+	fmt.Println("response:")
+	fmt.Println(analysis)
 }
