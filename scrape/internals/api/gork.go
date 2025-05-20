@@ -110,6 +110,41 @@ func (c *GrokClient) SendMessage(message, conversationID, model, proxy string, r
 	return cleanResponse, rawResp, nil
 }
 
+// AnalyzeTweet sends a tweet link to the analyze-tweet endpoint and returns Grok's response
+func (c *GrokClient) AnalyzeTweet(tweetLink, conversationID, model, proxy string, rawResponse bool) (string, string, error) {
+	reqBody := struct {
+		AuthToken      string `json:"auth_token"`
+		Ct0            string `json:"ct0"`
+		Message        string `json:"message"` // tweetLink is passed as "message"
+		ConversationID string `json:"conversation_id,omitempty"`
+		Model          string `json:"model,omitempty"`
+		Proxy          string `json:"proxy,omitempty"`
+		RawResponse    bool   `json:"raw_response,omitempty"`
+	}{
+		AuthToken:      c.AuthToken,
+		Ct0:            c.Ct0,
+		Message:        tweetLink,
+		ConversationID: conversationID,
+		Model:          model,
+		Proxy:          proxy,
+		RawResponse:    rawResponse,
+	}
+
+	body, err := c.doRequest("POST", "/analyze-tweet", reqBody)
+	if err != nil {
+		return "", "", err
+	}
+
+	result := gjson.ParseBytes(body)
+	if !result.Get("success").Bool() {
+		return "", "", errors.New(result.Get("error").String())
+	}
+
+	cleanResponse := result.Get("data.clean_response").String()
+	rawResp := result.Get("data.raw_response").String()
+
+	return cleanResponse, rawResp, nil
+}
 
 // GetConversationHistory retrieves the message history for a conversation (this is not requirede or needed just added it, maybe for further use)
 func (c *GrokClient) GetConversationHistory(conversationID, proxy string) (string, error) {
