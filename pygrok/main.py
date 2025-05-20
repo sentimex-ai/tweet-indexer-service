@@ -184,6 +184,63 @@ async def send_message(data: SendMessageRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post(
+    "/analyze-tweet",
+    response_model=GrokResponse,
+    summary="Analyze Tweet",
+    response_description="Returns Grok's analysis of a tweet",
+    tags=["Tweet Analysis"]
+)
+async def analyze_tweet(data: SendMessageRequest):
+    """
+    Analyze a tweet using Grok
+
+    ## Example Request
+    ```json
+    {
+        "auth_token": "your_auth_token",
+        "ct0": "your_ct0_token",
+        "message": "https://x.com/user/status/1234567890"
+    }
+    ```
+
+    ## Example Response
+    ```json
+    {
+        "success": true,
+        "data": {
+            "clean_response": "Here's what the tweet means...",
+            "raw_response": "{...}"
+        }
+    }
+    """
+    try:
+        def attempt(retries: int = 10):
+            if retries <= 0:
+                return None, None
+            with get_client(data.auth_token, data.ct0, data.proxy) as client:
+                cid = data.conversation_id
+                if not cid:
+                    cid = client.create_conversation().get("data", {}).get("create_grok_conversation", {}).get("conversation_id")
+                raw = client.analyze_tweet(tweet_link=data.message, conversation_id=cid)
+                clean = client.parse_grok_response(raw)
+                if raw:
+                    return raw, clean
+                else:
+                    return attempt(retries - 1)
+
+        raw, clean = attempt()
+        return GrokResponse(
+            success=True,
+            data={
+                "raw_response": raw if data.raw_response else None,
+                "clean_response": clean
+            },
+            error=None
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @app.get(
     "/conversation_history",
     response_model=GrokResponse,

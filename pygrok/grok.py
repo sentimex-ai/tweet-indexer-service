@@ -175,6 +175,46 @@ class GrokClient:
             out_put="text"
         )
 
+    def analyze_tweet(
+        self,
+        tweet_link: str,
+        conversation_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Send a message to Grok with detailed payload structure from curl request"""
+        return self._request(
+            "POST",
+            "https://grok.x.com/2/grok/add_response.json",
+            content=json.dumps({
+                "responses": [{
+                    "message": tweet_link,
+                    "sender": 1,
+                    "promptSource": "post_analysis_details_page"
+                }],
+                "systemPromptName": "",
+                "conversationId": conversation_id,
+                "returnSearchResults": True,
+                "returnCitations": True,
+                "promptMetadata": {
+                    "promptSource": "GROK_ANALYZE",
+                    "action": "INPUT",
+                    "properties": {
+                        "element": "BUTTON"
+                    }
+                },
+                "imageGenerationCount": 4,
+                "requestFeatures": {
+                    "eagerTweets": True,
+                    "serverHistory": True
+                },
+                "enableSideBySide": False,
+                "toolOverrides": {}
+            }),
+            extra_headers={
+                "Content-Type": "text/plain;charset=UTF-8",
+            },
+            out_put="text"
+        )
+
     def get_conversation_history(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """Get the history of a specific Grok conversation"""
         url = "https://x.com/i/api/graphql/8xmpo8d_Z7qMI4BzMfHG6Q/GrokConversationItemsByRestId"
