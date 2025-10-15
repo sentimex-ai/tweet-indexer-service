@@ -29,11 +29,24 @@ persistence:
     url: mongodb://localhost:27017
     database: tweet-indexer
 
+services:
+    twitterapiservices:
+      host: https://api.twitter.com/2/
+      bearertoken: AAAAAAAAAAAAAAAAAAAAABsnsAEAAAAAYDLC5wY5PN22Ds8BxKasnyP%2Be4Q%3DmCZl0LYpxGeopxDXKfNokqwYjZIXeSlPMEem5OI2IJTYm3YeOE
+    irys:
+      host: https://www.jeet.so/api/irys
+      bearertoken: jeet irys next api temp auth
+    grokapiservices:
+      host: http://grok-py
+
 server:
   port: 9090
+
 grpc:
   clients:
     accountableServices:
-      host: accountable:8080
+      host: accountable-services:8080
+    saasServices:
+      host: saas-services:8080
   server:
     port: 8080

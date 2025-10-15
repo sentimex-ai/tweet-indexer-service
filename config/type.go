@@ -46,11 +46,14 @@ type Stream struct {
 }
 
 type Kafka struct {
-	Brokers    []string `mapstructure:"brokers"`
-	UsePrivate bool     `mapstructure:"usePrivate"`
-	UseSASL    bool     `mapstructure:"useSasl"`
-	Username   string   `mapstructure:"username"`
-	Password   string   `mapstructure:"password"`
+	Brokers        []string `mapstructure:"brokers"`
+	UsePrivate     bool     `mapstructure:"usePrivate"`
+	UseSASL        bool     `mapstructure:"useSASL"`
+	Username       string   `mapstructure:"userName"`
+	Password       string   `mapstructure:"password"`
+	TraderTopic    string   `mapstructure:"traderTopic"`
+	MemeTopic      string   `mapstructure:"memeTopic"`
+	FollowingTopic string   `mapstructure:"followingTopic"`
 }
 type Services struct {
 	CoinGeckoServices  Service            `mapstructure:"coingeckoServices"`
