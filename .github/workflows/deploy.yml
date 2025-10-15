@@ -34,7 +34,7 @@ jobs:
         if: ${{ steps.vars.outputs.branch == env.STAGING_BRANCH }}
         with:
           do-access-token: ${{ secrets.DO_ACCESS_TOKEN_STAGING }}
-          image-name: ${{ env.IMAGE_NAME }}
+          image-name: ${{ env.IMAGE_NAME }}-staging
           image-version: ${{ steps.vars.outputs.sha_short }}-staging
 
       - name: Build image and Push to tweet-indexer-service Prod
