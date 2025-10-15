@@ -33,7 +33,7 @@ jobs:
         uses: sentimex-ai/git-action-do-build-push@v1.4
         if: ${{ steps.vars.outputs.branch == env.STAGING_BRANCH }}
         with:
-          do-access-token: ${{ secrets.DO_ACCESS_TOKEN }}
+          do-access-token: ${{ secrets.DO_ACCESS_TOKEN_STAGING }}
           image-name: ${{ env.IMAGE_NAME }}
           image-version: ${{ steps.vars.outputs.sha_short }}-staging
 
@@ -44,18 +44,37 @@ jobs:
           do-access-token: ${{ secrets.DO_ACCESS_TOKEN }}
           image-name: ${{ env.IMAGE_NAME }}
           image-version: ${{ steps.vars.outputs.sha_short }}-production
-      - name: Install doctl
+
+      - name: Install doctl (Staging)
         uses: digitalocean/action-doctl@v2
+        if: ${{ steps.vars.outputs.branch == env.STAGING_BRANCH }}
+        with:
+          token: ${{ secrets.DO_ACCESS_TOKEN_STAGING }}
+
+      - name: Install doctl (Production)
+        uses: digitalocean/action-doctl@v2
+        if: ${{ steps.vars.outputs.branch == env.PRODUCTION_BRANCH }}
         with:
           token: ${{ secrets.DO_ACCESS_TOKEN }}
 
-      # ★ new: pull down your cluster credentials
-      - name: Get Kubernetes credentials
-        run: |
-          doctl kubernetes cluster kubeconfig save k8s-jkb
+      # Staging only
+      - name: Get K8s credentials (staging)
+        if: ${{ steps.vars.outputs.branch == env.STAGING_BRANCH }}
+        run: doctl kubernetes cluster kubeconfig save k8s-1-31-1-do-5-nyc3-1737653389885
 
-        # ★ new: verify we can see the nodes (optional debug)
-      - name: Verify cluster access
+      - name: Verify cluster access (staging)
+        if: ${{ steps.vars.outputs.branch == env.STAGING_BRANCH }}
+        run: |
+          kubectl get nodes
+          kubectl get ns
+
+      # Prod only
+      - name: Get K8s credentials (prod)
+        if: ${{ steps.vars.outputs.branch == env.PRODUCTION_BRANCH }}
+        run: doctl kubernetes cluster kubeconfig save k8s-jkb
+
+      - name: Verify cluster access (prod)
+        if: ${{ steps.vars.outputs.branch == env.PRODUCTION_BRANCH }}
         run: |
           kubectl get nodes
           kubectl get ns
