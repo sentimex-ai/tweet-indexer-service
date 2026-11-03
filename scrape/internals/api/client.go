@@ -75,20 +75,29 @@ func NewTwitterClient(opts *NewTwitterClientOptions) (*TwitterClient, error) {
 }
 
 func (tc *TwitterClient) MakeRequest(method, url string, body io.Reader, headers *http.Header) (*[]byte, int, error) {
+	b, status, _, err := tc.makeRequest(method, url, body, headers)
+	return b, status, err
+}
+
+func (tc *TwitterClient) getWithHeaders(url string, headers *http.Header) (*[]byte, int, http.Header, error) {
+	return tc.makeRequest(http.MethodGet, url, nil, headers)
+}
+
+func (tc *TwitterClient) makeRequest(method, url string, body io.Reader, headers *http.Header) (*[]byte, int, http.Header, error) {
 	// Clone the body so it can be read and re-used
 	var bodyBytes []byte
 	if body != nil {
 		var err error
 		bodyBytes, err = io.ReadAll(body)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to read request body: %w", err)
+			return nil, 0, nil, fmt.Errorf("failed to read request body: %w", err)
 		}
 		body = bytes.NewReader(bodyBytes) // Reset body reader after reading
 	}
 
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to create %s request: %w", method, err)
+		return nil, 0, nil, fmt.Errorf("failed to create %s request: %w", method, err)
 	}
 
 	// Clone and optionally override headers
@@ -107,16 +116,16 @@ func (tc *TwitterClient) MakeRequest(method, url string, body io.Reader, headers
 	// Perform request
 	resp, err := (*tc.Client).Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%s request failed: %w", method, err)
+		return nil, 0, nil, fmt.Errorf("%s request failed", method)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("failed to read response body: %w", err)
+		return nil, resp.StatusCode, resp.Header, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	return &respBody, resp.StatusCode, nil
+	return &respBody, resp.StatusCode, resp.Header, nil
 }
 
 func (tc *TwitterClient) Get(url string, headers *http.Header) (*[]byte, int, error) {

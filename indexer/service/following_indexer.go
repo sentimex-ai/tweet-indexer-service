@@ -65,7 +65,7 @@ func NewFollowingIndexer(cfg config.Config, conn *mongodb.MongoConnection, dummy
 	follRepo := repository.NewFollowingRepository(conn)
 	twtPrf := twitterprofile.NewRepository(conn)
 	prfSvc := NewProfile(cfg, conn, dummySvc)
-	follPro := kafka.NewProducer(cfg.Stream, cfg.Stream.Kafka.FollowingTopic)
+	follPro := kafka.NewProducerFor(cfg, cfg.Stream.Kafka.FollowingTopic)
 
 	return FollowingIndexer{
 		follRepo:       follRepo,

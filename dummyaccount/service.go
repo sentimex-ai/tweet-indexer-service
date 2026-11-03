@@ -27,6 +27,10 @@ type Service interface {
 	FindAllByGroup(ctx context.Context, group int) ([]*SelAccount, error)
 	NewTwoFaAccount(ctx context.Context, username, password string, group int, twoPreFa, from string) error
 	Update2FaCode(ctx context.Context, username, code string) error
+	// Cooldown frees the account and keeps it out of rotation until `until` (rate limited).
+	Cooldown(ctx context.Context, username string, until time.Time) error
+	// Retire moves a dead account to `group` (SUSPENDED_GROUP, NOT_AUTHENTICATED_GROUP, ...) and frees it.
+	Retire(ctx context.Context, username string, group int) error
 }
 
 var (
@@ -256,4 +260,15 @@ func (s *ServiceDefaultImpl) RemoveCookies(ctx context.Context, username string)
 		return err
 	}
 	return nil
+}
+
+func (s *ServiceDefaultImpl) Cooldown(ctx context.Context, username string, until time.Time) error {
+	return s.repo.SetCooldown(ctx, username, until)
+}
+
+func (s *ServiceDefaultImpl) Retire(ctx context.Context, username string, group int) error {
+	if err := s.SwitchGroup(ctx, username, group); err != nil {
+		return err
+	}
+	return s.LogOut(ctx, username)
 }

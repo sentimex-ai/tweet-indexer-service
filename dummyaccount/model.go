@@ -13,6 +13,8 @@ var (
 	errEmptyAccount  = errors.New("error empty selenium account")
 	errCookiesFailed = errors.New("error using cookies failed")
 	ErrUserNotFound  = errors.New("error user not found")
+	// ErrNoAccount is returned when the pool has no free account right now.
+	ErrNoAccount = errEmptyAccount
 )
 
 type SelAccount struct {
@@ -28,6 +30,8 @@ type SelAccount struct {
 	TwoFAPre     string            `bson:"two_fa_pre" json:"two_fa_pre"`
 	TwoFACode    string            `bson:"two_fa_code" json:"two_fa_code"`
 	UpdatedAt    time.Time         `bson:"updated_at" json:"updated_at"`
+	// CooldownUntil keeps a rate limited account out of rotation until then.
+	CooldownUntil time.Time `bson:"cooldown_until" json:"cooldown_until"`
 }
 
 func (sA *SelAccount) GetID() any {

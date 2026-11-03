@@ -10,6 +10,7 @@ import (
 	"github.com/jeetdotso/tweet-indexer-service/persistence/mongodb"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const Collection = "following.indexes"
@@ -20,6 +21,14 @@ type FollowingRepository interface {
 	FindAllByUserID(ctx context.Context, userID string) ([]string, error)
 	FindAllByFollowingID(ctx context.Context, followingID string) ([]string, error)
 	DeleteAllByUserID(ctx context.Context, userID string) error
+	// UpsertEdges writes edges by _id (userID_followingID): a repeat run updates
+	// the row and never adds a second one. Safe to call with up to a page of edges.
+	UpsertEdges(ctx context.Context, edges []*model.Following) error
+	// CountByUserID is the number of stored edges for one source user.
+	CountByUserID(ctx context.Context, userID string) (int64, error)
+	// DeleteStaleForUser removes a user's edges last captured before cutoff
+	// (accounts they no longer follow). Only call after a complete run.
+	DeleteStaleForUser(ctx context.Context, userID string, cutoff time.Time) (int64, error)
 	InsertMultiple(ctx context.Context, followings []*model.Following) error
 	FindAllUniqueFollowingIDs(ctx context.Context) ([]string, error)
 	FindAllUniqueUserIDs(ctx context.Context) (map[string]struct{}, error)
@@ -43,12 +52,55 @@ func NewFollowingRepository(conn *mongodb.MongoConnection) FollowingRepository {
 	}
 }
 
+// UpdateOrInsert upserts the bare edge. It sets only the edge fields, so it
+// cannot blank the details the on-demand scraper stored on the same row.
 func (repo *MongoRepository) UpdateOrInsert(ctx context.Context, pl *model.Following) error {
-	err := repo.absrepo.InsertOrUpdate(pl)
-	if err != nil {
-		return err
+	_, err := repo.conn.Datastore.Collection(repo.absrepo.Collection).UpdateOne(ctx,
+		bson.M{"_id": pl.ID},
+		bson.M{"$set": bson.M{"user_id": pl.UserID, "following_id": pl.FollowingID, "updated_at": pl.UpdatedAt}},
+		options.Update().SetUpsert(true))
+	return err
+}
+
+func (repo *MongoRepository) UpsertEdges(ctx context.Context, edges []*model.Following) error {
+	if len(edges) == 0 {
+		return nil
 	}
-	return nil
+	models := make([]mongo.WriteModel, 0, len(edges))
+	for _, e := range edges {
+		models = append(models, mongo.NewUpdateOneModel().
+			SetFilter(bson.M{"_id": e.ID}).
+			SetUpdate(bson.M{
+				"$set": bson.M{
+					"user_id":                   e.UserID,
+					"following_id":              e.FollowingID,
+					"following_handle":          e.FollowingHandle,
+					"following_name":            e.FollowingName,
+					"following_followers_count": e.FollowingFollowersCount,
+					"following_following_count": e.FollowingFollowingCount,
+					"captured_at":               e.CapturedAt,
+					"updated_at":                e.UpdatedAt,
+				},
+				"$setOnInsert": bson.M{"first_captured_at": e.CapturedAt},
+			}).
+			SetUpsert(true))
+	}
+	_, err := repo.conn.Datastore.Collection(repo.absrepo.Collection).
+		BulkWrite(ctx, models, options.BulkWrite().SetOrdered(false))
+	return err
+}
+
+func (repo *MongoRepository) CountByUserID(ctx context.Context, userID string) (int64, error) {
+	return repo.conn.Datastore.Collection(repo.absrepo.Collection).CountDocuments(ctx, bson.M{"user_id": userID})
+}
+
+func (repo *MongoRepository) DeleteStaleForUser(ctx context.Context, userID string, cutoff time.Time) (int64, error) {
+	res, err := repo.conn.Datastore.Collection(repo.absrepo.Collection).
+		DeleteMany(ctx, bson.M{"user_id": userID, "captured_at": bson.M{"$lt": cutoff}})
+	if err != nil {
+		return 0, err
+	}
+	return res.DeletedCount, nil
 }
 
 func (repo *MongoRepository) FindById(ctx context.Context, id string) (*model.Following, error) {

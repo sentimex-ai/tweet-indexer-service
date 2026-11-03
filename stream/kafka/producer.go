@@ -27,6 +27,23 @@ func NewProducer(cfg config.Stream, topic string) stream.Producer {
 	return p
 }
 
+// NewProducerFor is NewProducer behind the features.kafka switch. With Kafka off it
+// returns a producer that drops messages (and says so once per call at debug level),
+// so services that only optionally publish can be built without any Kafka setup.
+func NewProducerFor(cfg config.Config, topic string) stream.Producer {
+	if !cfg.Features.Kafka {
+		return nopProducer{topic: topic}
+	}
+	return NewProducer(cfg.Stream, topic)
+}
+
+type nopProducer struct{ topic string }
+
+func (n nopProducer) Produce(key []byte, msg []byte) error {
+	logg.Log.Debug().Str("topic", n.topic).Msg("kafka is off (features.kafka=false), message dropped")
+	return nil
+}
+
 // Connect dials your VPC‐peered Kafka (:9092) using TLS only
 func (p *Producer) Connect(cfg config.Stream, topic string) {
 	logg.Log.Info().
