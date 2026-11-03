@@ -27,6 +27,8 @@ type Repository interface {
 	AcquireNextByGroup(ctx context.Context, group int) (*SelAccount, error)
 	AcquireNextGrokByGroup(ctx context.Context, group int) (*SelAccount, error)
 	ReleaseGrok(ctx context.Context, username string) error
+	// SetCooldown frees an account (in_use=false) and keeps it out of AcquireNextByGroup until `until`.
+	SetCooldown(ctx context.Context, username string, until time.Time) error
 }
 type MongoRepository struct {
 	conn    *mongodb.MongoConnection
@@ -109,6 +111,11 @@ func (repo *MongoRepository) AcquireNextByGroup(ctx context.Context, group int) 
 	filter := bson.M{
 		"in_use": false,
 		"group":  bson.M{"$in": bson.A{group}},
+		// skip accounts resting after a rate limit (rows that never had a cooldown match too)
+		"$or": bson.A{
+			bson.M{"cooldown_until": bson.M{"$exists": false}},
+			bson.M{"cooldown_until": bson.M{"$lte": time.Now()}},
+		},
 	}
 
 	// 2) Update sets in_use=true and bumps timestamps
@@ -283,4 +290,11 @@ func (r *MongoRepository) ReleaseGrok(ctx context.Context, username string) erro
 		logg.Log.Warn().Str("username", username).Msg("ReleaseGrok: no matching in-use account")
 	}
 	return nil
+}
+
+func (repo *MongoRepository) SetCooldown(ctx context.Context, username string, until time.Time) error {
+	_, err := repo.conn.Datastore.Collection(repo.absrepo.Collection).UpdateOne(ctx,
+		bson.M{"username": username},
+		bson.M{"$set": bson.M{"in_use": false, "cooldown_until": until, "updated_at": time.Now()}})
+	return err
 }

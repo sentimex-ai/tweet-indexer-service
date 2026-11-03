@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	realhttp "net/http"
 
@@ -18,15 +19,19 @@ import (
 
 func (tc *TwitterClient) commonRequest(endpoint string, params url.Values, headers *http.Header) (*gjson.Result, error) {
 	fullURL := fmt.Sprintf("%s%s?%s", tc.BaseURL, endpoint, params.Encode())
-	bodyBytes, statusCode, err := tc.Get(fullURL, headers)
-	if bodyBytes == nil {
-		return nil, fmt.Errorf("cannot do the request right now")
+	bodyBytes, statusCode, respHeader, err := tc.getWithHeaders(fullURL, headers)
+	if err != nil || bodyBytes == nil {
+		// Never wrap err with the URL: it holds the query, not secrets, but the
+		// transport error text can echo the proxy address.
+		return nil, &APIError{Kind: KindTransient, Message: "request did not complete"}
 	}
 	r := gjson.ParseBytes(*bodyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("cannot do the request right now")
-	} else if statusCode != 200 {
-		return &r, fmt.Errorf("bad request")
+	if statusCode != 200 {
+		return &r, classify(statusCode, func(k string) string { return respHeader.Get(k) }, r, time.Now())
+	}
+	// X also answers 200 with an errors array and no data for some failures.
+	if !r.Get("data").Exists() && r.Get("errors.0").Exists() {
+		return &r, classify(200, func(k string) string { return respHeader.Get(k) }, r, time.Now())
 	}
 	return &r, nil
 }
@@ -68,59 +73,23 @@ func (tc *TwitterClient) commonPostRequestJSON(endpoint string, payload interfac
 }
 
 func (tc *TwitterClient) UserID(username string) (string, error) {
-	variables, _ := json.Marshal(map[string]string{"screen_name": username})
-	features, _ := json.Marshal(map[string]interface{}{
-		"hidden_profile_subscriptions_enabled":                              true,
-		"profile_label_improvements_pcf_label_in_post_enabled":              true,
-		"rweb_tipjar_consumption_enabled":                                   true,
-		"responsive_web_graphql_exclude_directive_enabled":                  true,
-		"verified_phone_label_enabled":                                      false,
-		"subscriptions_verification_info_is_identity_verified_enabled":      true,
-		"subscriptions_verification_info_verified_since_enabled":            true,
-		"highlights_tweets_tab_ui_enabled":                                  true,
-		"responsive_web_twitter_article_notes_tab_enabled":                  true,
-		"subscriptions_feature_can_gift_premium":                            true,
-		"creator_subscriptions_tweet_preview_api_enabled":                   true,
-		"responsive_web_graphql_skip_user_profile_image_extensions_enabled": false,
-		"responsive_web_graphql_timeline_navigation_enabled":                true,
-	})
-	fieldToggles, _ := json.Marshal(map[string]bool{"withAuxiliaryUserLabels": false})
-	params := url.Values{}
-	params.Add("variables", string(variables))
-	params.Add("features", string(features))
-	params.Add("fieldToggles", string(fieldToggles))
-
-	result, err := tc.commonRequest("/i/api/graphql/32pL5BWe9WKeSK1MoPvFQQ/UserByScreenName", params, nil)
+	result, err := tc.FullUser(username)
 	if err != nil {
 		return "", err
 	}
-
-	return result.Get("data.user.result.rest_id").String(), nil
+	if t := result.Get("data.user.result.__typename").String(); t == "UserUnavailable" {
+		return "", &APIError{Kind: KindTargetBlocked, Status: 200, Message: "user unavailable: " + result.Get("data.user.result.reason").String()}
+	}
+	id := result.Get("data.user.result.rest_id").String()
+	if id == "" {
+		return "", &APIError{Kind: KindTargetGone, Status: 200, Message: "no user in answer for " + username}
+	}
+	return id, nil
 }
-func (tc *TwitterClient) FullUser(username string) (*gjson.Result, error) {
-	variables, _ := json.Marshal(map[string]string{"screen_name": username})
-	features, _ := json.Marshal(map[string]interface{}{
-		"hidden_profile_subscriptions_enabled":                              true,
-		"profile_label_improvements_pcf_label_in_post_enabled":              true,
-		"rweb_tipjar_consumption_enabled":                                   true,
-		"responsive_web_graphql_exclude_directive_enabled":                  true,
-		"verified_phone_label_enabled":                                      false,
-		"subscriptions_verification_info_is_identity_verified_enabled":      true,
-		"subscriptions_verification_info_verified_since_enabled":            true,
-		"highlights_tweets_tab_ui_enabled":                                  true,
-		"responsive_web_twitter_article_notes_tab_enabled":                  true,
-		"subscriptions_feature_can_gift_premium":                            true,
-		"creator_subscriptions_tweet_preview_api_enabled":                   true,
-		"responsive_web_graphql_skip_user_profile_image_extensions_enabled": false,
-		"responsive_web_graphql_timeline_navigation_enabled":                true,
-	})
-	fieldToggles, _ := json.Marshal(map[string]bool{"withAuxiliaryUserLabels": false})
-	params := url.Values{}
-	params.Add("variables", string(variables))
-	params.Add("features", string(features))
-	params.Add("fieldToggles", string(fieldToggles))
 
-	return tc.commonRequest("/i/api/graphql/32pL5BWe9WKeSK1MoPvFQQ/UserByScreenName", params, nil)
+// FullUser looks a handle up (UserByScreenName). Query id and feature flags come from config.
+func (tc *TwitterClient) FullUser(username string) (*gjson.Result, error) {
+	return tc.graphQL("userByScreenName", map[string]interface{}{"screen_name": username})
 }
 
 // FetchUsersByID looks up one or more users by their REST IDs in a single GraphQL request.
@@ -185,46 +154,22 @@ func (tc *TwitterClient) FetchUsersByID(host string, userIDs []string) (*gjson.R
 	return result, nil
 }
 
+// Following returns one page of the accounts userID follows. cursor is empty for the first page.
 func (tc *TwitterClient) Following(userID string, cursor string) (*gjson.Result, error) {
-	variables, _ := json.Marshal(map[string]interface{}{
-		"userId":                 userID,
-		"count":                  20,
-		"cursor":                 cursor,
-		"includePromotedContent": false,
-	})
-	features, _ := json.Marshal(map[string]interface{}{
-		"profile_label_improvements_pcf_label_in_post_enabled":                    false,
-		"rweb_tipjar_consumption_enabled":                                         true,
-		"responsive_web_graphql_exclude_directive_enabled":                        true,
-		"verified_phone_label_enabled":                                            false,
-		"creator_subscriptions_tweet_preview_api_enabled":                         true,
-		"responsive_web_graphql_timeline_navigation_enabled":                      true,
-		"responsive_web_graphql_skip_user_profile_image_extensions_enabled":       false,
-		"premium_content_api_read_enabled":                                        false,
-		"communities_web_enable_tweet_community_results_fetch":                    true,
-		"c9s_tweet_anatomy_moderator_badge_enabled":                               true,
-		"responsive_web_grok_analyze_button_fetch_trends_enabled":                 true,
-		"articles_preview_enabled":                                                true,
-		"responsive_web_edit_tweet_api_enabled":                                   true,
-		"graphql_is_translatable_rweb_tweet_is_translatable_enabled":              true,
-		"view_counts_everywhere_api_enabled":                                      true,
-		"longform_notetweets_consumption_enabled":                                 true,
-		"responsive_web_twitter_article_tweet_consumption_enabled":                true,
-		"tweet_awards_web_tipping_enabled":                                        false,
-		"creator_subscriptions_quote_tweet_preview_enabled":                       false,
-		"freedom_of_speech_not_reach_fetch_enabled":                               true,
-		"standardized_nudges_misinfo":                                             true,
-		"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": true,
-		"rweb_video_timestamps_enabled":                                           true,
-		"longform_notetweets_rich_text_read_enabled":                              true,
-		"longform_notetweets_inline_media_enabled":                                true,
-		"responsive_web_enhance_cards_enabled":                                    false,
-	})
-	params := url.Values{}
-	params.Add("variables", string(variables))
-	params.Add("features", string(features))
+	return tc.FollowingPage(userID, cursor, 20)
+}
 
-	return tc.commonRequest("/i/api/graphql/gsxNGYhRKA6iYYSInE9qew/Following", params, nil)
+// FollowingPage is Following with a page size (X accepts up to 100).
+func (tc *TwitterClient) FollowingPage(userID, cursor string, count int) (*gjson.Result, error) {
+	vars := map[string]interface{}{
+		"userId":                 userID,
+		"count":                  count,
+		"includePromotedContent": false,
+	}
+	if cursor != "" {
+		vars["cursor"] = cursor
+	}
+	return tc.graphQL("following", vars)
 }
 
 func (tc *TwitterClient) Followers(userID string, cursor string) (*gjson.Result, error) {
@@ -512,16 +457,8 @@ type DumpTransport struct {
 	Base realhttp.RoundTripper
 }
 
+// RoundTrip passes the request through. It used to print every request header,
+// which put the session cookie and csrf token on stdout; nothing is printed now.
 func (t *DumpTransport) RoundTrip(req *realhttp.Request) (*realhttp.Response, error) {
-	// Dump the request for debugging
-	// fmt.Printf("Request URL: %s\n", req.URL.String())
-	// fmt.Printf("Request Method: %s\n", req.Method)
-	// fmt.Printf("Request Headers:\n")
-	for name, values := range req.Header {
-		for _, value := range values {
-			fmt.Printf("  %s: %s\n", name, value)
-		}
-	}
-	fmt.Printf("Request Body:\n")
 	return t.Base.RoundTrip(req)
 }

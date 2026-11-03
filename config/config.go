@@ -15,10 +15,10 @@ const (
 var cfg *Config
 
 func Load(cfgpath string) *Config {
-	fmt.Println("Starting to load configuration")
+	fmt.Fprintln(os.Stderr, "Starting to load configuration")
 
 	if cfg != nil {
-		fmt.Println("Configuration already loaded")
+		fmt.Fprintln(os.Stderr, "Configuration already loaded")
 		return cfg
 	}
 
@@ -27,14 +27,14 @@ func Load(cfgpath string) *Config {
 	viper.SetConfigType("yaml")
 	viper.AutomaticEnv()
 
-	fmt.Println("Attempting to read configuration file")
+	fmt.Fprintln(os.Stderr, "Attempting to read configuration file")
 	if err := viper.ReadInConfig(); err != nil {
 		panic("Error reading configuration file: " + err.Error())
 	}
 
 	bindEnvVars()
 	mergeProfileVars()
-	fmt.Println("Attempting to unmarshal configuration")
+	fmt.Fprintln(os.Stderr, "Attempting to unmarshal configuration")
 	if err := viper.Unmarshal(&cfg); err != nil {
 		panic("Error unmarshalling configuration: " + err.Error())
 	}

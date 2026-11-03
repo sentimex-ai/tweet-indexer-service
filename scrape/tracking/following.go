@@ -378,7 +378,7 @@ func processEntries(
 }
 
 func isEndOfList(nextCursor string) bool {
-	return nextCursor == "" || strings.HasPrefix(nextCursor, "0|")
+	return followingParsers.IsEnd(nextCursor)
 }
 
 // MonitorSingleAccount fetches *all* pages of “following” for the given user,
@@ -448,35 +448,8 @@ func (fm *FollowingMonitor) MonitorSingleAccount(
 	return nil
 }
 
-// extractEntriesAndCursor will scan the “instructions” array,
-// find the TimelineAddEntries block, and return:
-//   - a slice of just the *user* entries
-//   - the next‐page cursor string (or empty if you’ve hit the end)
+// extractEntriesAndCursor returns the user entries of one page and the cursor
+// for the next one. See followingParsers.ExtractPage for how entries are told apart.
 func extractEntriesAndCursor(r *gjson.Result) (users []gjson.Result, nextCursor string) {
-	// 1) locate the “AddEntries” instruction
-	instr := r.Get("data.user.result.timeline.timeline.instructions").Array()
-	var add gjson.Result
-	for _, in := range instr {
-		if in.Get("type").String() == "TimelineAddEntries" {
-			add = in
-			break
-		}
-	}
-	if !add.Exists() {
-		return nil, ""
-	}
-
-	all := add.Get("entries").Array()
-	if len(all) < 2 {
-		// nothing to do
-		return nil, ""
-	}
-
-	// the second‐to‐last entry is always the bottom‐cursor
-	bottom := all[len(all)-2]
-	nextCursor = bottom.Get("content.value").String()
-
-	// everything *before* the last two entries are the real user items
-	users = all[:len(all)-2]
-	return users, nextCursor
+	return followingParsers.ExtractPage(r)
 }

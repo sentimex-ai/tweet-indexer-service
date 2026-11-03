@@ -1,0 +1,34 @@
+# Proof run against the FAKE X server (cmd/mockx), not real x.com
+# Local MongoDB 8.0.12, 3 test accounts (acct_a, acct_b, acct_c). No real X account was available.
+
+## Run 1: six handles, first time (one pooled session expires partway: acct_c)
+22:25:42  acct_c session is dead, retiring it
+OK      @small_account           scraped=137 expected~137 stored=137 pages=2 rate_limited=0 swapped=0
+OK      @mid_account             scraped=640 expected~640 stored=640 pages=7 rate_limited=0 swapped=0
+OK      @big_follower            scraped=2350 expected~2350 stored=2350 pages=24 rate_limited=0 swapped=1
+FAILED  @private_person          scraped=0 expected~50 stored=0 pages=0 rate_limited=0 swapped=0
+          error: "private_person" is a protected profile that no pooled account follows: x api target_blocked (http 0, code 0): protected
+FAILED  @banned_person           scraped=0 expected~0 stored=0 pages=0 rate_limited=0 swapped=0
+          error: look up "banned_person": x api target_blocked (http 0, code 0): user unavailable: Suspended
+FAILED  @nobody_here             scraped=0 expected~0 stored=0 pages=0 rate_limited=0 swapped=0
+          error: look up "nobody_here": x api target_gone (http 0, code 0): no such user
+
+## Accounts afterwards
+ACCOUNT                  GROUP              IN USE  COOKIES  RESTING UNTIL
+acct_a                   working            false   2        -
+acct_b                   working            false   2        -
+acct_c                   not-authenticated  false   2        -
+
+## Run 2: same handles again, mock now answers HTTP 429 after 6 Following calls per 25 s
+22:26:36  rate limited, waiting 15s for the window to reopen
+22:27:02  rate limited, waiting 16s for the window to reopen
+22:27:28  rate limited, waiting 16s for the window to reopen
+22:27:54  rate limited, waiting 16s for the window to reopen
+OK      @small_account           scraped=137 expected~137 stored=137 pages=2 rate_limited=0 swapped=0
+OK      @mid_account             scraped=640 expected~640 stored=640 pages=7 rate_limited=1 swapped=0
+OK      @big_follower            scraped=2350 expected~2350 stored=2350 pages=24 rate_limited=3 swapped=0
+
+## Stored rows after run 2 (re-run created no duplicates)
+small_account: 137 stored
+mid_account: 640 stored
+big_follower: 2350 stored

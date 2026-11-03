@@ -23,6 +23,7 @@ import (
 	"github.com/jeetdotso/tweet-indexer-service/proto/grpcreviewentry"
 	"github.com/jeetdotso/tweet-indexer-service/proto/grpcsaasentry"
 	"github.com/jeetdotso/tweet-indexer-service/scheduler"
+	twitterAPI "github.com/jeetdotso/tweet-indexer-service/scrape/internals/api"
 	"github.com/jeetdotso/tweet-indexer-service/shared"
 	"github.com/jeetdotso/tweet-indexer-service/twitterprofile"
 	"github.com/robfig/cron"
@@ -34,10 +35,16 @@ import (
 func main() {
 	//Load app config
 	var (
-		cfg      = config.Load("./config/env/")
-		conn     = mongodb.NewConnection(&cfg.Persistence)
-		grpcconn = grpcclient.NewClientMap(&cfg.Grpc.Clients)
+		cfg  = config.Load("./config/env/")
+		conn = mongodb.NewConnection(&cfg.Persistence)
 	)
+	twitterAPI.Configure(cfg.X)
+
+	// Only dial the other services when asked to: the following scraper does not need them.
+	var grpcconn *grpcclient.GrpcClientMap
+	if cfg.Features.GrpcClients {
+		grpcconn = grpcclient.NewClientMap(&cfg.Grpc.Clients)
+	}
 
 	// Root context that we'll cancel on SIGTERM/SIGINT
 	rootCtx, rootCancel := context.WithCancel(context.Background())
@@ -50,21 +57,35 @@ func main() {
 	dummSvc := dummyaccount.NewSeleniumService(&conn, cfg)
 	var tagsToRun []twitterprofile.TagType = shared.RUNNING_TAGS_TYPE
 	dummSvc.ResetAll(rootCtx)
-	//Register Scrapes
-	_, tweetIndexer, saasIdx := registerScrapes(rootCtx, *cfg, &conn, grpcconn, tagsToRun)
+
+	// The tweet pipeline, Grok and Kafka are off unless config/env says
+	// features.tweetPipeline / grok / kafka. Without them the service is the HTTP
+	// admin API plus whatever else is switched on; following lists are read with
+	// cmd/following-scrape.
+	var tweetIndexer *service.TokenTweetIndexer
+	var saasIdx service.SaasIndexer
+	if cfg.Features.TweetPipeline {
+		if !cfg.Features.Grok || !cfg.Features.Kafka || grpcconn == nil {
+			logg.Log.Panic().Msg("features.tweetPipeline needs features.grok, features.kafka and features.grpcClients")
+		}
+		_, tweetIndexer, saasIdx = registerScrapes(rootCtx, *cfg, &conn, grpcconn, tagsToRun)
+	}
 
 	//Register GRPC server
-	// gRPC
-	gb, err := makeGRPCServer(cfg, &conn, grpcconn, dummSvc)
-	if err != nil {
-		logg.Log.Panic().Err(err).Msg("failed to init gRPC server")
-	}
-	go func() {
-		logg.Log.Info().Msgf("gRPC listening on :%s", cfg.Grpc.Server.Port)
-		if err := gb.srv.Serve(gb.lis); err != nil && err != grpc.ErrServerStopped {
-			logg.Log.Panic().Err(err).Msg("gRPC server error")
+	var gb *grpcBundle
+	if cfg.Features.GrpcServer {
+		var err error
+		gb, err = makeGRPCServer(cfg, &conn, grpcconn, dummSvc)
+		if err != nil {
+			logg.Log.Panic().Err(err).Msg("failed to init gRPC server")
 		}
-	}()
+		go func() {
+			logg.Log.Info().Msgf("gRPC listening on :%s", cfg.Grpc.Server.Port)
+			if err := gb.srv.Serve(gb.lis); err != nil && err != grpc.ErrServerStopped {
+				logg.Log.Panic().Err(err).Msg("gRPC server error")
+			}
+		}()
+	}
 	//Register Schedulers
 	cron_sched := makeCron(&conn, cfg, dummSvc, saasIdx, tagsToRun)
 	cron_sched.Start()
@@ -85,21 +106,25 @@ func main() {
 	// 1) Cancel root context → long loops should exit
 	rootCancel()
 
-	tweetIndexer.StopGrokPool() // stop tweet indexer
+	if tweetIndexer != nil {
+		tweetIndexer.StopGrokPool() // stop tweet indexer
+	}
 
 	cron_sched.Stop()
 	// 3) Gracefully stop gRPC
-	doneCh := make(chan struct{})
-	go func() {
-		gb.srv.GracefulStop()
-		close(doneCh)
-	}()
+	if gb != nil {
+		doneCh := make(chan struct{})
+		go func() {
+			gb.srv.GracefulStop()
+			close(doneCh)
+		}()
 
-	select {
-	case <-doneCh:
-	case <-time.After(10 * time.Second):
-		logg.Log.Warn().Msg("gRPC GracefulStop timed out; forcing Stop")
-		gb.srv.Stop()
+		select {
+		case <-doneCh:
+		case <-time.After(10 * time.Second):
+			logg.Log.Warn().Msg("gRPC GracefulStop timed out; forcing Stop")
+			gb.srv.Stop()
+		}
 	}
 
 	// 4) Gracefully stop HTTP
@@ -185,24 +210,25 @@ func makeCron(conn *mongodb.MongoConnection, cfg *config.Config, dummSvc dummyac
 	return c
 }
 
+// Schedulers returns the cron jobs that are switched on. Everything except the
+// account health probe belongs to the tweet pipeline (Grok retries, Kafka
+// following events, profile analysis), so those only run with features.tweetPipeline.
+// The health probe runs with either features.accountHealth or the pipeline.
 func Schedulers(conn *mongodb.MongoConnection, cfg *config.Config, dummSvc dummyaccount.Service, saasIdx service.SaasIndexer, tags []twitterprofile.TagType) []scheduler.Scheduler {
-	var (
-		grokRetry   = sched.NewGrokRetryScheduler(cfg, conn, dummSvc, saasIdx)
-		healthCheck = sched.NewAccountHealthScheduler(cfg, conn, dummSvc)
-		scrapeCycle = sched.NewScrapeCycleScheduler(cfg, conn, tags)
-		followCycle = sched.NewFollowingCycleScheduler(cfg, conn, dummSvc, tags)
-		prfAnalysis = sched.NewProfileAnalysis(cfg, conn, dummSvc)
-		prfUpdater  = sched.NewProfileUpdater(cfg, conn, dummSvc)
-	)
-
-	return []scheduler.Scheduler{
-		grokRetry,
-		healthCheck,
-		followCycle,
-		scrapeCycle,
-		prfAnalysis,
-		prfUpdater,
+	var jobs []scheduler.Scheduler
+	if cfg.Features.AccountHealth || cfg.Features.TweetPipeline {
+		jobs = append(jobs, sched.NewAccountHealthScheduler(cfg, conn, dummSvc))
 	}
+	if !cfg.Features.TweetPipeline {
+		return jobs
+	}
+	return append(jobs,
+		sched.NewGrokRetryScheduler(cfg, conn, dummSvc, saasIdx),
+		sched.NewFollowingCycleScheduler(cfg, conn, dummSvc, tags),
+		sched.NewScrapeCycleScheduler(cfg, conn, tags),
+		sched.NewProfileAnalysis(cfg, conn, dummSvc),
+		sched.NewProfileUpdater(cfg, conn, dummSvc),
+	)
 }
 
 // ---- gRPC wiring (we keep server+listener so we can stop gracefully) ----

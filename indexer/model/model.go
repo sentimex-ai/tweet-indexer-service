@@ -225,6 +225,15 @@ type Following struct {
 	UserID      string    `json:"user_id" bson:"user_id"`
 	FollowingID string    `json:"following_id" bson:"following_id"`
 	UpdatedAt   time.Time `json:"updated_at" bson:"updated_at"`
+
+	// Details of the followed account, filled by the on-demand scraper
+	// (cmd/following-scrape). Edges written by the older refresh job leave
+	// them empty.
+	FollowingHandle         string    `json:"following_handle,omitempty" bson:"following_handle"`
+	FollowingName           string    `json:"following_name,omitempty" bson:"following_name"`
+	FollowingFollowersCount int       `json:"following_followers_count,omitempty" bson:"following_followers_count"`
+	FollowingFollowingCount int       `json:"following_following_count,omitempty" bson:"following_following_count"`
+	CapturedAt              time.Time `json:"captured_at,omitempty" bson:"captured_at"`
 }
 
 func NewFollowing(userID, followingID string) *Following {
@@ -234,6 +243,18 @@ func NewFollowing(userID, followingID string) *Following {
 		FollowingID: followingID,
 		UpdatedAt:   time.Now(),
 	}
+}
+
+// NewFollowingDetailed is NewFollowing plus the followed account's details.
+func NewFollowingDetailed(userID, followingID, handle, name string, followers, following int, capturedAt time.Time) *Following {
+	f := NewFollowing(userID, followingID)
+	f.FollowingHandle = handle
+	f.FollowingName = name
+	f.FollowingFollowersCount = followers
+	f.FollowingFollowingCount = following
+	f.CapturedAt = capturedAt
+	f.UpdatedAt = capturedAt
+	return f
 }
 
 func (f *Following) GetID() any {

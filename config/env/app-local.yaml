@@ -1,0 +1,7 @@
+# Profile for running on a laptop: ENVIRONMENT=local (the following-scrape tool
+# selects it when ENVIRONMENT is unset). No production hosts in here.
+app: tweet-indexer-service
+persistence:
+  mongodb:
+    url: mongodb://127.0.0.1:27017
+    database: tweet-indexer-local
