@@ -220,16 +220,36 @@ func (tw *TweetEvent) GetMediaUrls() []string {
 	return urls
 }
 
+// Following is one edge "UserID follows FollowingID" in following.indexes.
+// _id is "<UserID>_<FollowingID>" so re-scrapes upsert instead of duplicating.
+// No omitempty: persistence.getUpdate uses the raw bson tag as the field name.
 type Following struct {
-	ID          string    `json:"id" bson:"_id"`
-	UserID      string    `json:"user_id" bson:"user_id"`
-	FollowingID string    `json:"following_id" bson:"following_id"`
-	UpdatedAt   time.Time `json:"updated_at" bson:"updated_at"`
+	ID          string `json:"id" bson:"_id"`
+	UserID      string `json:"user_id" bson:"user_id"`
+	FollowingID string `json:"following_id" bson:"following_id"`
+	// handle of UserID at scrape time (the profile whose list this is)
+	SourceHandle string `json:"source_handle" bson:"source_handle"`
+	// snapshot of the followed account
+	Handle         string    `json:"handle" bson:"handle"`
+	DisplayName    string    `json:"display_name" bson:"display_name"`
+	FollowerCount  int       `json:"follower_count" bson:"follower_count"`
+	FollowingCount int       `json:"following_count" bson:"following_count"`
+	Verified       bool      `json:"verified" bson:"verified"`
+	Protected      bool      `json:"protected" bson:"protected"`
+	ProfileImg     string    `json:"profile_img" bson:"profile_img"`
+	CapturedAt     time.Time `json:"captured_at" bson:"captured_at"` // last scrape that saw this edge
+	FirstSeenAt    time.Time `json:"first_seen_at" bson:"first_seen_at"`
+	RunID          string    `json:"run_id" bson:"run_id"`
+	UpdatedAt      time.Time `json:"updated_at" bson:"updated_at"`
+}
+
+func FollowingID(userID, followingID string) string {
+	return fmt.Sprintf("%s_%s", userID, followingID)
 }
 
 func NewFollowing(userID, followingID string) *Following {
 	return &Following{
-		ID:          fmt.Sprintf("%s_%s", userID, followingID),
+		ID:          FollowingID(userID, followingID),
 		UserID:      userID,
 		FollowingID: followingID,
 		UpdatedAt:   time.Now(),

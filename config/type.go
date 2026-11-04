@@ -8,6 +8,58 @@ type Config struct {
 	Services    Services    `mapstructure:"services"`
 	Grpc        Grpc        `mapstructure:"grpc"`
 	Stream      Stream      `mapstructure:"stream"`
+	X           X           `mapstructure:"x"`
+	Pipelines   Pipelines   `mapstructure:"pipelines"`
+	Admin       Admin       `mapstructure:"admin"`
+}
+
+// Pipelines toggles the legacy subsystems. Everything defaults to off so the
+// service starts with only MongoDB + the following scraper.
+type Pipelines struct {
+	Tweets     bool `mapstructure:"tweets"`     // token tweet indexer + scrape-cycle scheduler
+	Grok       bool `mapstructure:"grok"`       // grok-py calls, grok retry / profile analysis schedulers
+	Schedulers bool `mapstructure:"schedulers"` // legacy cron jobs (health, following refresh, profile updater)
+	Grpc       bool `mapstructure:"grpc"`       // gRPC server + outbound gRPC clients
+}
+
+type Admin struct {
+	// Token required in the X-Admin-Token header for /admin/* endpoints.
+	// Set via ADMIN_TOKEN. Empty disables the admin endpoints.
+	Token string `mapstructure:"token"`
+}
+
+// X holds everything tied to the x.com web client. Query IDs and feature
+// flags rotate with X web deploys, so they live here instead of in code.
+type X struct {
+	BaseURL   string            `mapstructure:"baseUrl"`
+	Bearer    string            `mapstructure:"bearer"` // public web-app bearer, not a secret
+	UserAgent string            `mapstructure:"userAgent"`
+	Ops       map[string]XOp    `mapstructure:"ops"`
+	Scrape    XScrape           `mapstructure:"scrape"`
+	Headers   map[string]string `mapstructure:"headers"`
+}
+
+// XOp is one GraphQL operation. Features / FieldToggles / ExtraVariables are
+// raw JSON strings (paste them straight from the browser's request URL).
+// They are strings, not YAML maps, because viper lower-cases map keys and
+// X's field toggles are camelCase.
+type XOp struct {
+	QueryID        string `mapstructure:"queryId"`
+	Features       string `mapstructure:"features"`
+	FieldToggles   string `mapstructure:"fieldToggles"`
+	ExtraVariables string `mapstructure:"extraVariables"`
+}
+
+type XScrape struct {
+	PageSize           int `mapstructure:"pageSize"`           // users per Following page (X caps around 50-100)
+	PageDelayMs        int `mapstructure:"pageDelayMs"`        // pause between pages on one account
+	MaxAttemptsPerPage int `mapstructure:"maxAttemptsPerPage"` // across account rotations
+	MaxAccountSwaps    int `mapstructure:"maxAccountSwaps"`    // per handle, protects the pool
+	RateLimitCooldownS int `mapstructure:"rateLimitCooldownS"` // fallback when x-rate-limit-reset is absent
+	BackoffBaseMs      int `mapstructure:"backoffBaseMs"`
+	BackoffMaxMs       int `mapstructure:"backoffMaxMs"`
+	LeaseTimeoutS      int `mapstructure:"leaseTimeoutS"` // in_use leases older than this are reclaimable
+	AccountGroup       int `mapstructure:"accountGroup"`  // dummy.accounts group to lease from (0 = WORKING_GROUP)
 }
 
 type Persistence struct {
@@ -46,6 +98,7 @@ type Stream struct {
 }
 
 type Kafka struct {
+	Enabled        bool     `mapstructure:"enabled"`
 	Brokers        []string `mapstructure:"brokers"`
 	UsePrivate     bool     `mapstructure:"usePrivate"`
 	UseSASL        bool     `mapstructure:"useSASL"`

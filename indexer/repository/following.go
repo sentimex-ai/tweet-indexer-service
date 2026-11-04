@@ -29,6 +29,15 @@ type FollowingRepository interface {
 	FollowingListWithExclusions(ctx context.Context, userID string, exclusions []string) ([]string, error)
 	// given a following id get all users who follow it minus the exclusions
 	FollowedByWithExclusions(ctx context.Context, followingID string, exclusions []string) ([]string, error)
+
+	// UpsertEdges writes one page of edges in a single unordered bulk write,
+	// keyed on _id = userID_followingID. first_seen_at is only set on insert.
+	UpsertEdges(ctx context.Context, edges []*model.Following) (inserted, updated int64, err error)
+	// PruneNotSeen deletes edges of userID that the given run did not see
+	// (accounts the profile unfollowed). Only call after a *complete* scrape.
+	PruneNotSeen(ctx context.Context, userID, runID string) (int64, error)
+	CountByUserID(ctx context.Context, userID string) (int64, error)
+	EnsureIndexes(ctx context.Context) error
 }
 type MongoRepository struct {
 	conn    *mongodb.MongoConnection

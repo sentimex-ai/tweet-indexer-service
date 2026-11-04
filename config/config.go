@@ -68,6 +68,11 @@ func bindEnvVars() {
 	bindEnvVar("services.twitterapiservices.bearertoken", "TWITTER_TOKEN")
 	bindEnvVar("persistence.s3.key", "S3_KEY")
 	bindEnvVar("persistence.s3.secret", "S3_SECRET")
+	bindEnvVar("persistence.mongodb.database", "MONGODB_DATABASE")
+	bindEnvVar("admin.token", "ADMIN_TOKEN")
+	bindEnvVar("stream.kafka.enabled", "KAFKA_ENABLED")
+	bindEnvVar("stream.kafka.password", "KAFKA_PASSWORD")
+	bindEnvVar("x.baseUrl", "X_BASE_URL") // e.g. the fakex-server for local testing
 }
 
 func bindEnvVar(key string, envKey string) {

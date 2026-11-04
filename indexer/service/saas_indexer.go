@@ -34,8 +34,8 @@ func NewSaasIndexer(cfg config.Config, conn *mongodb.MongoConnection) SaasIndexe
 	tweetRepo := repository.NewTweetIndexRepo(conn)
 	rawRepo := repository.NewRawTweetRepo(conn)
 
-	memeProducer := kafka.NewProducer(cfg.Stream, cfg.Stream.Kafka.MemeTopic)
-	traderProducer := kafka.NewProducer(cfg.Stream, cfg.Stream.Kafka.TraderTopic)
+	memeProducer := kafka.NewProducerIfEnabled(cfg.Stream, cfg.Stream.Kafka.MemeTopic)
+	traderProducer := kafka.NewProducerIfEnabled(cfg.Stream, cfg.Stream.Kafka.TraderTopic)
 	return SaasIndexer{
 		grokRepo:                grokRepo,
 		tweetRepo:               tweetRepo,

@@ -1,15 +1,7 @@
 app: tweet-indexer-service
-stream:
- kafka:
-   brokers: 127.0.0.1:9092
+# Local development. Never point this at a shared database; use MONGODB_URI
+# for anything that is not a throwaway local mongod.
 persistence:
-  s3:
-    key: test
-    secret: test
-    bucket: static.jeet.cx
-    endpoint: http://localhost:4566
-    cdnEndpoint: http://localhost:4566/static.jeet.cx
-    forcePathStyle: true
   mongodb:
-    url: mongodb+srv://doadmin:Ye0P6c3ta8u5714A@mongodb-jkb-prod-0d6838e5.mongo.ondigitalocean.com/admin?tls=true&authSource=admin&replicaSet=mongodb-jkb-prod
-    database: tweet-indexer
+    url: mongodb://localhost:27017
+    database: tweet-indexer-dev

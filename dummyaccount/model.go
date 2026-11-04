@@ -28,6 +28,11 @@ type SelAccount struct {
 	TwoFAPre     string            `bson:"two_fa_pre" json:"two_fa_pre"`
 	TwoFACode    string            `bson:"two_fa_code" json:"two_fa_code"`
 	UpdatedAt    time.Time         `bson:"updated_at" json:"updated_at"`
+	// Set by the following scraper: account is skipped until this time.
+	RateLimitedUntil time.Time `bson:"rate_limited_until" json:"rate_limited_until"`
+	// Last failure kind seen by the scraper (session_expired, account_suspended, ...).
+	LastError   string    `bson:"last_error" json:"last_error"`
+	LastErrorAt time.Time `bson:"last_error_at" json:"last_error_at"`
 }
 
 func (sA *SelAccount) GetID() any {

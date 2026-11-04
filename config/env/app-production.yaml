@@ -7,7 +7,7 @@ stream:
     usePrivate: false
     useSASL:    false
     userName: "doadmin"
-    password: "AVNS_vuJo18PP38Pqp8B4UKC"
+    password: "" # KAFKA_PASSWORD
     traderTopic: "jeet.stream.tweet.v2.trader"
     memeTopic:   "jeet.stream.tweet.v2.shill"
     followingTopic: "jeet.stream.followings.v1.followers"
@@ -33,10 +33,10 @@ persistence:
 services:
     twitterapiservices:
       host: https://api.twitter.com/2/
-      bearertoken: AAAAAAAAAAAAAAAAAAAAABsnsAEAAAAAYDLC5wY5PN22Ds8BxKasnyP%2Be4Q%3DmCZl0LYpxGeopxDXKfNokqwYjZIXeSlPMEem5OI2IJTYm3YeOE
+      bearertoken: "" # TWITTER_TOKEN
     irys:
       host: https://www.jeet.so/api/irys
-      bearertoken: jeet irys next api temp auth
+      bearertoken: ""
     grokapiservices:
       host: http://grok-py
 

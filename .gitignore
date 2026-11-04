@@ -1,0 +1,12 @@
+# Session material must never be committed
+cookies*.json
+*.cookies
+*cookies*.txt
+.env
+.env.*
+
+# build output
+/scrape-following
+/scrape-following.exe
+/tweet-indexer-service
+/tweet-indexer-service.exe

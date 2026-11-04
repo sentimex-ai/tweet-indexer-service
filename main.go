@@ -13,6 +13,7 @@ import (
 	"github.com/jeetdotso/tweet-indexer-service/config"
 	"github.com/jeetdotso/tweet-indexer-service/connection/proto/grpcclient"
 	"github.com/jeetdotso/tweet-indexer-service/dummyaccount"
+	"github.com/jeetdotso/tweet-indexer-service/followscrape"
 	"github.com/jeetdotso/tweet-indexer-service/indexer/controller"
 	"github.com/jeetdotso/tweet-indexer-service/indexer/controller/indexergrpchandler"
 	"github.com/jeetdotso/tweet-indexer-service/indexer/controller/reviewgrpchandler"
@@ -34,10 +35,12 @@ import (
 func main() {
 	//Load app config
 	var (
-		cfg      = config.Load("./config/env/")
-		conn     = mongodb.NewConnection(&cfg.Persistence)
-		grpcconn = grpcclient.NewClientMap(&cfg.Grpc.Clients)
+		cfg  = config.Load("./config/env/")
+		conn = mongodb.NewConnection(&cfg.Persistence)
+		pl   = cfg.Pipelines
 	)
+	logg.Log.Info().Bool("tweets", pl.Tweets).Bool("grok", pl.Grok).Bool("schedulers", pl.Schedulers).
+		Bool("grpc", pl.Grpc).Bool("kafka", cfg.Stream.Kafka.Enabled).Msg("pipelines")
 
 	// Root context that we'll cancel on SIGTERM/SIGINT
 	rootCtx, rootCancel := context.WithCancel(context.Background())
@@ -49,28 +52,57 @@ func main() {
 
 	dummSvc := dummyaccount.NewSeleniumService(&conn, cfg)
 	var tagsToRun []twitterprofile.TagType = shared.RUNNING_TAGS_TYPE
-	dummSvc.ResetAll(rootCtx)
-	//Register Scrapes
-	_, tweetIndexer, saasIdx := registerScrapes(rootCtx, *cfg, &conn, grpcconn, tagsToRun)
 
-	//Register GRPC server
-	// gRPC
-	gb, err := makeGRPCServer(cfg, &conn, grpcconn, dummSvc)
-	if err != nil {
-		logg.Log.Panic().Err(err).Msg("failed to init gRPC server")
+	var (
+		grpcconn     *grpcclient.GrpcClientMap
+		tweetIndexer *service.TokenTweetIndexer
+		saasIdx      service.SaasIndexer
+		gb           *grpcBundle
+		cron_sched   *cron.Cron
+	)
+	if pl.Grpc || pl.Tweets {
+		grpcconn = grpcclient.NewClientMap(&cfg.Grpc.Clients)
 	}
-	go func() {
-		logg.Log.Info().Msgf("gRPC listening on :%s", cfg.Grpc.Server.Port)
-		if err := gb.srv.Serve(gb.lis); err != nil && err != grpc.ErrServerStopped {
-			logg.Log.Panic().Err(err).Msg("gRPC server error")
+	if pl.Tweets {
+		// Legacy: ResetAll frees every lease in dummy.accounts, including
+		// ones held by other running instances. The following scraper does
+		// not need it (its leases expire on their own).
+		dummSvc.ResetAll(rootCtx)
+		_, tweetIndexer, saasIdx = registerScrapes(rootCtx, *cfg, &conn, grpcconn, tagsToRun)
+	} else if pl.Schedulers {
+		saasIdx = service.NewSaasIndexer(*cfg, &conn)
+	}
+
+	if pl.Grpc {
+		var err error
+		gb, err = makeGRPCServer(cfg, &conn, grpcconn, dummSvc)
+		if err != nil {
+			logg.Log.Panic().Err(err).Msg("failed to init gRPC server")
 		}
-	}()
-	//Register Schedulers
-	cron_sched := makeCron(&conn, cfg, dummSvc, saasIdx, tagsToRun)
-	cron_sched.Start()
+		go func() {
+			logg.Log.Info().Msgf("gRPC listening on :%s", cfg.Grpc.Server.Port)
+			if err := gb.srv.Serve(gb.lis); err != nil && err != grpc.ErrServerStopped {
+				logg.Log.Panic().Err(err).Msg("gRPC server error")
+			}
+		}()
+	}
+	if pl.Schedulers {
+		cron_sched = makeCron(&conn, cfg, dummSvc, saasIdx, tagsToRun)
+		cron_sched.Start()
+	}
+
+	// Following scraper (always on)
+	fdeps, err := followscrape.NewDeps(rootCtx, cfg, &conn, logg.Log)
+	if err != nil {
+		logg.Log.Panic().Err(err).Msg("failed to init following scraper")
+	}
+	followAdmin := followscrape.NewAdmin(rootCtx, fdeps, cfg.Admin.Token)
+	if cfg.Admin.Token == "" {
+		logg.Log.Warn().Msg("ADMIN_TOKEN not set: /admin/following/* will reject every request")
+	}
 
 	// HTTP
-	httpSrv := makeHTTPServer(cfg, &conn, dummSvc)
+	httpSrv := makeHTTPServer(cfg, &conn, dummSvc, followAdmin)
 	go func() {
 		logg.Log.Info().Msgf("HTTP listening on :%s", cfg.Server.Port)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -85,21 +117,26 @@ func main() {
 	// 1) Cancel root context → long loops should exit
 	rootCancel()
 
-	tweetIndexer.StopGrokPool() // stop tweet indexer
-
-	cron_sched.Stop()
+	if tweetIndexer != nil {
+		tweetIndexer.StopGrokPool() // stop tweet indexer
+	}
+	if cron_sched != nil {
+		cron_sched.Stop()
+	}
 	// 3) Gracefully stop gRPC
-	doneCh := make(chan struct{})
-	go func() {
-		gb.srv.GracefulStop()
-		close(doneCh)
-	}()
+	if gb != nil {
+		doneCh := make(chan struct{})
+		go func() {
+			gb.srv.GracefulStop()
+			close(doneCh)
+		}()
 
-	select {
-	case <-doneCh:
-	case <-time.After(10 * time.Second):
-		logg.Log.Warn().Msg("gRPC GracefulStop timed out; forcing Stop")
-		gb.srv.Stop()
+		select {
+		case <-doneCh:
+		case <-time.After(10 * time.Second):
+			logg.Log.Warn().Msg("gRPC GracefulStop timed out; forcing Stop")
+			gb.srv.Stop()
+		}
 	}
 
 	// 4) Gracefully stop HTTP
@@ -114,7 +151,7 @@ func main() {
 }
 
 // ---- HTTP wiring (uses http.Server for graceful shutdown) ----
-func makeHTTPServer(cfg *config.Config, conn *mongodb.MongoConnection, dummSvc dummyaccount.Service) *http.Server {
+func makeHTTPServer(cfg *config.Config, conn *mongodb.MongoConnection, dummSvc dummyaccount.Service, followAdmin *followscrape.Admin) *http.Server {
 	api := service.NewTweetAPI(*cfg, conn)
 	twtCtrl := controller.NewTweetIndexApi(api)
 	adminCtrl := controller.NewAdminController(cfg, conn, dummSvc)
@@ -150,6 +187,9 @@ func makeHTTPServer(cfg *config.Config, conn *mongodb.MongoConnection, dummSvc d
 	r.GET("/public/indexer/admin-panel/following/cycle/latest/:type", adminPnlCtrl.GetFollowingCycle)
 	r.GET("/public/indexer/admin-panel/following/cycle", adminPnlCtrl.GetAllFollowingCycles)
 	r.GET("/public/indexer/admin-panel/grok-chart", adminPnlCtrl.GetGrokDataCycles)
+
+	// On-demand following scraper (X-Admin-Token required)
+	followAdmin.Register(r)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Server.Port,
@@ -187,22 +227,20 @@ func makeCron(conn *mongodb.MongoConnection, cfg *config.Config, dummSvc dummyac
 
 func Schedulers(conn *mongodb.MongoConnection, cfg *config.Config, dummSvc dummyaccount.Service, saasIdx service.SaasIndexer, tags []twitterprofile.TagType) []scheduler.Scheduler {
 	var (
-		grokRetry   = sched.NewGrokRetryScheduler(cfg, conn, dummSvc, saasIdx)
 		healthCheck = sched.NewAccountHealthScheduler(cfg, conn, dummSvc)
-		scrapeCycle = sched.NewScrapeCycleScheduler(cfg, conn, tags)
 		followCycle = sched.NewFollowingCycleScheduler(cfg, conn, dummSvc, tags)
-		prfAnalysis = sched.NewProfileAnalysis(cfg, conn, dummSvc)
 		prfUpdater  = sched.NewProfileUpdater(cfg, conn, dummSvc)
 	)
-
-	return []scheduler.Scheduler{
-		grokRetry,
-		healthCheck,
-		followCycle,
-		scrapeCycle,
-		prfAnalysis,
-		prfUpdater,
+	jobs := []scheduler.Scheduler{healthCheck, followCycle, prfUpdater}
+	if cfg.Pipelines.Tweets {
+		jobs = append(jobs, sched.NewScrapeCycleScheduler(cfg, conn, tags))
 	}
+	if cfg.Pipelines.Grok {
+		jobs = append(jobs,
+			sched.NewGrokRetryScheduler(cfg, conn, dummSvc, saasIdx),
+			sched.NewProfileAnalysis(cfg, conn, dummSvc))
+	}
+	return jobs
 }
 
 // ---- gRPC wiring (we keep server+listener so we can stop gracefully) ----

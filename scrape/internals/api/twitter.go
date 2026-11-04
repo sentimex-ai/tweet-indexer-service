@@ -465,7 +465,6 @@ func (tc *TwitterClient) GetTweet(tweetID, username string) (*gjson.Result, erro
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Println("Response body:", resp)
 		return nil, fmt.Errorf("GetTweet %d: %s", resp.StatusCode, data)
 	}
 
@@ -513,15 +512,7 @@ type DumpTransport struct {
 }
 
 func (t *DumpTransport) RoundTrip(req *realhttp.Request) (*realhttp.Response, error) {
-	// Dump the request for debugging
-	// fmt.Printf("Request URL: %s\n", req.URL.String())
-	// fmt.Printf("Request Method: %s\n", req.Method)
-	// fmt.Printf("Request Headers:\n")
-	for name, values := range req.Header {
-		for _, value := range values {
-			fmt.Printf("  %s: %s\n", name, value)
-		}
-	}
-	fmt.Printf("Request Body:\n")
+	// This used to print every request header (including Cookie and
+	// x-csrf-token) to stdout. Never dump headers: they carry session cookies.
 	return t.Base.RoundTrip(req)
 }

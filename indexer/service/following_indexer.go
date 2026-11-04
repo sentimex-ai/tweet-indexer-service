@@ -65,7 +65,7 @@ func NewFollowingIndexer(cfg config.Config, conn *mongodb.MongoConnection, dummy
 	follRepo := repository.NewFollowingRepository(conn)
 	twtPrf := twitterprofile.NewRepository(conn)
 	prfSvc := NewProfile(cfg, conn, dummySvc)
-	follPro := kafka.NewProducer(cfg.Stream, cfg.Stream.Kafka.FollowingTopic)
+	follPro := kafka.NewProducerIfEnabled(cfg.Stream, cfg.Stream.Kafka.FollowingTopic)
 
 	return FollowingIndexer{
 		follRepo:       follRepo,
@@ -153,8 +153,15 @@ func (f *FollowingIndexer) HandleFollowing(ctx context.Context, followedByID str
 		return
 	}
 	//add to following repo
+	// Write the full snapshot through the same upsert the following scraper
+	// uses; the reflective UpdateOrInsert would $set the snapshot fields to
+	// zero values.
 	follow := model.NewFollowing(followedByID, user.ID)
-	if err := f.follRepo.UpdateOrInsert(ctx, follow); err != nil {
+	follow.Handle, follow.DisplayName = user.Handle, user.UserName
+	follow.FollowerCount, follow.FollowingCount = user.Followers, user.Following
+	follow.Verified, follow.ProfileImg = user.Verified, user.ProfileImg
+	follow.CapturedAt = follow.UpdatedAt
+	if _, _, err := f.follRepo.UpsertEdges(ctx, []*model.Following{follow}); err != nil {
 		logg.Log.Error().Caller().Ctx(ctx).Err(err).Msg("Failed to upsert following.")
 		return
 	}
